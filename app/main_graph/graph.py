@@ -3,9 +3,6 @@ from typing import Any, Dict, List, Literal, TypedDict
 from langgraph.types import Send
 from fastapi import APIRouter, Depends
 from langchain.chat_models import init_chat_model
-from langchain_core.tools import tool
-from langchain_openai import OpenAIEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.constants import START, END
 from langgraph.graph import MessagesState, StateGraph
 from langgraph.checkpoint.memory import InMemorySaver  
@@ -114,16 +111,18 @@ def fanout_PipelineSubgraph(state: MainState):
     for task in state["pipeline_inputs"]:
         # Send 到主图里的节点名 "run_PipelineSubgraph"
         # task 里已经有 route + task_description 了
-        sends.append(Send("run_PipelineSubgraph", task))
+        sends.append(Send("run_PipelineSubgraph", {"task": task}))
     return sends
 
 
 """定义并行处理子图数据收回方式"""
-def run_PipelineSubgraph(state: MainState):
+def run_PipelineSubgraph(state):
+    task = state["task"]
+
     sub_result = pipeline_subgraph.invoke(
         {
-            "route": state["route"],
-            "task_description": state["task_description"],
+            "route": task["route"],
+            "task_description": task["task_description"],
         }
     )
 
@@ -165,7 +164,7 @@ def fanout_A2ASubgraph(state: MainState):
     ]
 
 """定义a2a子图数据收回方式"""
-def run_A2ASubgraph(state: MainState):
+def run_A2ASubgraph(state):
     response = a2a_subgraph.invoke({
         "report": state["report"],
         "company_news": state["company_news"],

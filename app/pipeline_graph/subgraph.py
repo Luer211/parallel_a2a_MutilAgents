@@ -1,7 +1,7 @@
 import os
 from typing import Literal, TypedDict
 from langchain.chat_models import init_chat_model
-from langchain_core.tools import tool
+from langchain.tools import tool
 from langgraph.constants import START, END
 from langgraph.graph import  StateGraph
 from pydantic import BaseModel
@@ -9,17 +9,23 @@ from sqlalchemy import text
 
 
 # ======= Tools =======
-
-
+"""网络搜索工具"""
+from tavily import TavilyClient
+tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+    
 
 # ======= Pydantic =======
 class Output(BaseModel):
+    input: str
+
+class SearchInput(BaseModel):
+    query: str
 
 # ======= Models =======
 model = init_chat_model(
-        model="gpt-4o-mini",
-        api_key=os.getenv("API_KEY"),
-        base_url=os.getenv("BASE_URL"),
+    model="gpt-4o-mini",
+    api_key=os.getenv("API_KEY"),
+    base_url=os.getenv("BASE_URL"),
 )
 
 # ======= Prompt =======
@@ -46,23 +52,36 @@ def dynamic_router(state: PipelineState):
     return {}
 
 """财报解析"""
-def report_analysis():
+def report_analysis(state: PipelineState):
     # 拿到输入的任务描述
+    task_description = state["task_description"]
     # 解析财报，去掉冗余的信息。其实是不是可以不去除。
     return {"report": text}
 
 """公司新闻获取"""
-def get_company_news():
+def get_company_news(state: PipelineState):
+    text = None
     # 拿到输入的任务描述
+    task_description = state["task_description"]
     # 发起检索
-    # 返回三条结果，封装成列表返回
+    response = tavily_client.search(task_description, max_results=3)
+    # 把三个结果返回
+    for result in response['results']:
+        text = text + "\n" + result['content']
+    # 返回三条结果，封装成字符串返回
     return {"company_news": text}
 
 """行业新闻获取"""
-def get_industry_news():
+def get_industry_news(state: PipelineState):
+    text = None
     # 拿到输入的任务描述
+    task_description = state["task_description"]
     # 发起检索
-    # 返回三条结果，封装成列表返回
+    response = tavily_client.search(task_description, max_results=3)
+    # 把三个结果返回
+    for result in response['results']:
+        text = text + "\n" + result['content']
+    # 返回三条结果，封装成字符串返回
     return {"industry_news": text}
 
 

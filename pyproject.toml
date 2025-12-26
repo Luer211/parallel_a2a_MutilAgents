@@ -10,5 +10,7 @@ dependencies = [
     "langgraph>=1.0.4",
     "openai>=2.8.1",
     "python-dotenv>=1.2.1",
+    "sqlalchemy>=2.0.45",
+    "tavily-python>=0.7.15",
     "uvicorn>=0.38.0",
 ]
