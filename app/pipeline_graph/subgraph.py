@@ -5,7 +5,6 @@ from langchain.tools import tool
 from langgraph.constants import START, END
 from langgraph.graph import  StateGraph
 from pydantic import BaseModel
-from sqlalchemy import text
 
 
 # ======= Tools =======
@@ -56,11 +55,12 @@ def report_analysis(state: PipelineState):
     # 拿到输入的任务描述
     task_description = state["task_description"]
     # 解析财报，去掉冗余的信息。其实是不是可以不去除。
-    return {"report": text}
+    report = model.invoke([{"role": "user", "content": task_description}]).content
+    return {"report": report}
 
 """公司新闻获取"""
 def get_company_news(state: PipelineState):
-    text = None
+    text = ""
     # 拿到输入的任务描述
     task_description = state["task_description"]
     # 发起检索
@@ -73,7 +73,7 @@ def get_company_news(state: PipelineState):
 
 """行业新闻获取"""
 def get_industry_news(state: PipelineState):
-    text = None
+    text = ""
     # 拿到输入的任务描述
     task_description = state["task_description"]
     # 发起检索
@@ -97,7 +97,7 @@ def create_pipeline_subgraph():
     Pipeline_builder.add_node("get_industry_news", get_industry_news)
 
     """连接Edge"""
-    Pipeline_builder.add_edge(START, dynamic_router)
+    Pipeline_builder.add_edge(START, "dynamic_router")
 
     Pipeline_builder.add_conditional_edges(
         "dynamic_router",
@@ -109,9 +109,10 @@ def create_pipeline_subgraph():
         },
     )
 
-    Pipeline_builder.add_edge(report_analysis, END)
-    Pipeline_builder.add_edge(get_company_news, END)
-    Pipeline_builder.add_edge(get_industry_news, END)
+    Pipeline_builder.add_edge("report_analysis", END)
+    Pipeline_builder.add_edge("get_company_news", END)
+    Pipeline_builder.add_edge("get_industry_news", END)
+
 
     """创建图"""
     return Pipeline_builder.compile()

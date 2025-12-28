@@ -178,10 +178,11 @@ def create_a2a_subgraph():
     a2a_builder.add_node("final_dialogue_compression", final_dialogue_compression)
 
     """连接Edge"""
-    a2a_builder.add_edge(START, dialogue_compression)
-    a2a_builder.add_edge(dialogue_compression, Buffett)
-    a2a_builder.add_edge(Buffett, Munger)
-    a2a_builder.add_edge(Munger, judgment)
+    a2a_builder.add_edge(START, "dialogue_compression")
+    a2a_builder.add_edge("dialogue_compression", "Buffett")
+    a2a_builder.add_edge("Buffett", "Munger")
+    a2a_builder.add_edge("Munger", "judgment")
+
 
     # 动态选择
     def judgment_condition(state: A2AState):
@@ -198,7 +199,7 @@ def create_a2a_subgraph():
         }
     )
 
-    a2a_builder.add_edge(final_dialogue_compression, END)
+    a2a_builder.add_edge("final_dialogue_compression", END)
 
     """创建图"""
     return a2a_builder.compile()

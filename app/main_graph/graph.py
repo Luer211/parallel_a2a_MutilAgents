@@ -1,5 +1,8 @@
+import operator
 import os
-from typing import Any, Dict, List, Literal, TypedDict
+from datetime import datetime
+from pathlib import Path
+from typing import Annotated, Any, Dict, List, Literal, TypedDict
 from langgraph.types import Send
 from fastapi import APIRouter, Depends
 from langchain.chat_models import init_chat_model
@@ -32,7 +35,6 @@ model = init_chat_model(
     )
 
 # ======= Prompt =======
-Prompt1 = ("""""")
 
 # ======= State =======
 class MainState(TypedDict):
@@ -49,12 +51,11 @@ class MainState(TypedDict):
     # 给管道的输入
     pipeline_inputs: List[Dict[str, Any]]
 
-    # 财报解析
-    report: str
-    # 公司新闻
-    company_news: str
-    # 行业新闻
-    industry_news: str
+    # 【关键修改】使用 Reducer 确保并行任务的结果是“累加”或“收集”
+    # 如果子图返回的是 str，这里会把字符串拼起来；建议用 List 存储
+    report: Annotated[str, operator.add] 
+    company_news: Annotated[str, operator.add]
+    industry_news: Annotated[str, operator.add]
 
     # 用户确认键
     user_confirm: bool
@@ -69,20 +70,11 @@ class MainState(TypedDict):
 # ======= Node =======
 """获取数据，解析成三个任务"""
 def get_data(state: MainState):
-
-    original_report = state.get("original_report")
-    if not original_report:
-        original_report = input("请输入原始财报文本：\n")
-
-    # 这里先粗暴生成三条任务描述，后面你可以改成 LLM 帮你拆任务
-    report_task = f"请对以下财报做结构化分析和要点提炼：\n{original_report}"
-    company_news_task = "请根据公司名称，抓取并总结最近 1-3 个月的重要公司新闻。"
-    industry_news_task = "请根据公司所在行业，抓取并总结最近 1-3 个月的重要行业新闻。"
-
     return {
-        "report_task": report_task,
-        "company_news_task": company_news_task,
-        "industry_news_task": industry_news_task,
+        "report_task": f"分析财报：{state['original_report']}",
+        "company_news_task": "获取公司新闻",
+        "industry_news_task": "获取行业新闻",
+        "report": "", "company_news": "", "industry_news": "" 
     }
     
 """解析数据、加键"""
@@ -126,16 +118,8 @@ def run_PipelineSubgraph(state):
         }
     )
 
-    # 子图只会返回三种键中的一种，我们判断一下是哪种
-    if "report" in sub_result:
-        return {"report": sub_result["report"]}
-    elif "company_news" in sub_result:
-        return {"company_news": sub_result["company_news"]}
-    elif "industry_news" in sub_result:
-        return {"industry_news": sub_result["industry_news"]}
-    else:
-        # 理论上不会走到这里，留个兜底
-        return {}
+    # 只返回命中的键，Reducer 会处理合并
+    return {k: v for k, v in sub_result.items() if k in ["report", "company_news", "industry_news"]}
 
 
 """HITL,用户拿到汇总的信息，判断是继续往下执行还是重新收集"""
@@ -169,20 +153,35 @@ def run_A2ASubgraph(state):
         "report": state["report"],
         "company_news": state["company_news"],
         "industry_news": state["industry_news"],
-        "dialogue_history": state["dialogue_history"],
-        "round": state["round"],
-        "max_round": state["max_round"],
+        "dialogue_history": [],
+        "round": 1,
+        "max_round": 5,
     })
     return {"final_summary": response["final_summary"]}
 
 """汇总所有结论，输出结构化报告"""
 def summary_and_output(state: MainState):
-    output = Output(
-        report_summary=state.get("report", ""),
-        company_news_summary=state.get("company_news", ""),
-        industry_news_summary=state.get("industry_news", ""),
-        investment_conclusion=state.get("final_summary", ""),
-    )
+    structured_model = model.with_structured_output(Output)
+    prompt = f"""
+        你是投资研究分析师。请基于以下已收集信息，生成一份结构化报告。
+        要求：
+        1) 按字段输出：report_summary、company_news_summary、industry_news_summary、investment_conclusion
+        2) 必须覆盖输入信息中的关键事实，避免臆测
+        3) 用中文，条理清晰，尽量精炼
+
+        【财报解析】
+        {state.get("report", "")}
+
+        【公司新闻】
+        {state.get("company_news", "")}
+
+        【行业新闻】
+        {state.get("industry_news", "")}
+
+        【多智能体讨论结论】
+        {state.get("final_summary", "")}
+    """.strip()
+    output = structured_model.invoke(prompt)
     # LangGraph State 里放 dict，避免直接塞 Pydantic 对象
     return {"final_output": output.dict()}
 
@@ -193,7 +192,6 @@ main_builder = StateGraph(MainState)
 """注册Node"""
 main_builder.add_node("get_data", get_data)
 main_builder.add_node("parse_and_process", parse_and_process)
-main_builder.add_node("fanout_PipelineSubgraph", fanout_PipelineSubgraph)
 main_builder.add_node("run_PipelineSubgraph", run_PipelineSubgraph)
 main_builder.add_node("HITL", HITL)
 main_builder.add_node("fanout_A2ASubgraph", fanout_A2ASubgraph)
@@ -201,11 +199,14 @@ main_builder.add_node("run_A2ASubgraph", run_A2ASubgraph)
 main_builder.add_node("summary_and_output", summary_and_output)
 
 """连接Edge"""
-main_builder.add_edge(START, get_data)
-main_builder.add_edge(get_data, parse_and_process)
-main_builder.add_edge(parse_and_process, fanout_PipelineSubgraph)
-main_builder.add_edge(fanout_PipelineSubgraph, run_PipelineSubgraph)
-main_builder.add_edge(run_PipelineSubgraph, HITL)
+main_builder.add_edge(START, "get_data")
+main_builder.add_edge("get_data", "parse_and_process")
+main_builder.add_conditional_edges(
+    "parse_and_process",
+    fanout_PipelineSubgraph,
+    ["run_PipelineSubgraph"]
+)
+main_builder.add_edge("run_PipelineSubgraph", "HITL")
 
 # 定义条件边
 def HITL_condition(state: MainState):
@@ -218,15 +219,14 @@ main_builder.add_conditional_edges(
     "HITL",
     HITL_condition,
     {
-        "yes": "fanout_A2ASubgraph",           # 用户同意 → 下一步
-        "no": "parse_and_process",             # 用户不同意 → 重新收集信息
+        "yes": "run_A2ASubgraph",           # 用户同意 → 下一步
+        "no": "get_data",             # 用户不同意 → 重新收集信息
     }
 )
 
-main_builder.add_edge(fanout_A2ASubgraph, run_A2ASubgraph)
-main_builder.add_edge(run_A2ASubgraph, summary_and_output)
-
-main_builder.add_edge(summary_and_output, END)
+main_builder.add_edge("fanout_A2ASubgraph", "run_A2ASubgraph")
+main_builder.add_edge("run_A2ASubgraph", "summary_and_output")
+main_builder.add_edge("summary_and_output", END)
 
 """创建图"""
 # 创建两个子图
@@ -236,4 +236,47 @@ main_graph = main_builder.compile()
 
 """开始使用"""
 def run_invest_pipeline(original_report: str):
-    return main_graph.invoke({"original_report": original_report})
+    result = main_graph.invoke({"original_report": original_report})
+
+    final_output = result.get("final_output")
+    if final_output:
+        md_path = save_report_to_md(final_output)
+        print(f"📄 投研报告已保存为 Markdown 文件：{md_path}")
+
+    return result
+
+"""将最终投研结果保存为 Markdown 文件"""
+def save_report_to_md(final_output: dict, output_dir: str = "reports") -> str:
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"investment_report_{timestamp}.md"
+    filepath = Path(output_dir) / filename
+
+    md_content = f"""# 投研分析报告
+
+        ## 一、财报解析摘要
+        {final_output.get("report_summary", "")}
+
+        ---
+
+        ## 二、公司新闻摘要
+        {final_output.get("company_news_summary", "")}
+
+        ---
+
+        ## 三、行业新闻摘要
+        {final_output.get("industry_news_summary", "")}
+
+        ---
+
+        ## 四、投资结论（多智能体讨论）
+        {final_output.get("investment_conclusion", "")}
+
+        ---
+
+        *生成时间：{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}*
+    """
+
+    filepath.write_text(md_content, encoding="utf-8")
+    return str(filepath)
