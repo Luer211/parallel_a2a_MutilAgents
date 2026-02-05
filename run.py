@@ -3,7 +3,6 @@ import uvicorn
 from dotenv import load_dotenv
 
 def main():
-    # 1. 加载 .env 环境变量（API_KEY、BASE_URL等）
     load_dotenv()
 
     # 2. 启动 FastAPI
@@ -11,7 +10,7 @@ def main():
         "main:app",     # main.py 中的 app 实例
         host="0.0.0.0",
         port=8000,
-        reload=True     # 自动热重载，开发模式强烈建议开
+        reload=True
     )
 
 if __name__ == "__main__":

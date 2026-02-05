@@ -280,3 +280,4 @@ def save_report_to_md(final_output: dict, output_dir: str = "reports") -> str:
 
     filepath.write_text(md_content, encoding="utf-8")
     return str(filepath)
+    
